@@ -1061,3 +1061,46 @@ drm_syncobj_signal_ioctl(struct drm_device *dev, void *data,
 
 	return ret;
 }
+
+int drm_syncobj_query_ioctl(struct drm_device *dev, void *data,
+			    struct drm_file *file_private)
+{
+	struct drm_syncobj_timeline_array *args = data;
+	struct drm_syncobj **syncobjs;
+	uint64_t __user *points = u64_to_user_ptr(args->points);
+	uint32_t i;
+	int ret;
+
+	if (!drm_core_check_feature(dev, DRIVER_SYNCOBJ))
+		return -ENODEV;
+
+	if (args->pad != 0)
+		return -EINVAL;
+
+	if (args->count_handles == 0)
+		return -EINVAL;
+
+	ret = drm_syncobj_array_find(file_private,
+				     u64_to_user_ptr(args->handles),
+				     args->count_handles,
+				     &syncobjs);
+	if (ret < 0)
+		return ret;
+
+	for (i = 0; i < args->count_handles; i++) {
+		struct dma_fence_chain *chain;
+		struct dma_fence *fence;
+		uint64_t point;
+
+		fence = drm_syncobj_fence_get(syncobjs[i]);
+		chain = to_dma_fence_chain(fence);
+		point = chain ? fence->seqno : 0;
+		ret = copy_to_user(&points[i], &point, sizeof(uint64_t));
+		ret = ret ? -EFAULT : 0;
+		if (ret)
+			break;
+	}
+	drm_syncobj_array_free(syncobjs, args->count_handles);
+
+	return ret;
+}
