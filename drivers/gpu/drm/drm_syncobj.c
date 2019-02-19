@@ -145,12 +145,25 @@ void drm_syncobj_add_point(struct drm_syncobj *syncobj,
 {
 	struct syncobj_wait_entry *cur, *tmp;
 	struct dma_fence *prev;
+	struct dma_fence_chain *last_node;
+	uint64_t last_point;
 
 	dma_fence_get(fence);
 
 	spin_lock(&syncobj->lock);
 
 	prev = drm_syncobj_fence_get(syncobj);
+	last_node = to_dma_fence_chain(prev);
+	last_point = last_node ? prev->seqno : 0;
+	if (point <= last_point) {
+		/* timeline doesn't allow messed order signal points. */
+		DRM_ERROR("signal point %llu <= last point %llu!\n",
+			  point, last_point);
+		kfree(chain);
+		spin_unlock(&syncobj->lock);
+		dma_fence_put(prev);
+		return;
+	}
 	dma_fence_chain_init(chain, prev, fence, point);
 	rcu_assign_pointer(syncobj->fence, &chain->base);
 
